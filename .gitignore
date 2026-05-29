@@ -1,0 +1,12 @@
+/**/*.Development.json
+/**/[Bb]in/
+/**/[Oo]bj/
+/**/.vs/
+
+scratch/
+
+.vscode/
+.idea/
+
+*.user
+*.suo

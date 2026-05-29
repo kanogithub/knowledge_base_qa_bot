@@ -1,0 +1,175 @@
+# Cloud-KB — .NET Aspire 10 Topology & Service Discovery Spec
+#
+# This file defines the system's distributed topology as orchestrated
+# by .NET Aspire 10 AppHost. It outlines the service names, connection
+# keys, and networking dependencies.
+#
+# ## SDD Automation Targets
+# - **AppHost Orchestration:** The C# `Program.cs` in `CloudKB.AppHost` MUST
+#   use these exact resource names when registering containers and projects.
+# - **Service Discovery:** Downstream microservices MUST reference these
+#   resource names for service-to-service HTTP requests (via HttpClient).
+
+# ═══════════════════════════════════════════════════════════
+# 1. Backing Infrastructure Resources (Containers)
+# ═══════════════════════════════════════════════════════════
+
+resources:
+  # ── PostgreSQL Database ─────────────────────────────────
+  postgres-server:
+    type: container
+    image: postgres:16-alpine
+    resourceName: "postgres"
+    environment:
+      POSTGRES_DB: "cloudkb"
+    bindings:
+      - port: 5432
+    databases:
+      - name: "cloudkb"
+        connectionStringKey: "ConnectionStrings:postgres"
+
+  # ── Redis Cache & Pub/Sub ───────────────────────────────
+  redis-cache:
+    type: container
+    image: redis:7.2-alpine
+    resourceName: "redis"
+    bindings:
+      - port: 6379
+    connectionStringKey: "ConnectionStrings:redis"
+
+  # ── RabbitMQ Message Broker ─────────────────────────────
+  rabbitmq-broker:
+    type: container
+    image: rabbitmq:3.13-management-alpine
+    resourceName: "rabbitmq"
+    bindings:
+      - port: 5672       # AMQP protocol
+      - port: 15672      # Management UI
+    connectionStringKey: "ConnectionStrings:rabbitmq"
+
+  # ── MinIO Object Storage (S3 Mock) ──────────────────────
+  minio-storage:
+    type: container
+    image: minio/minio:latest
+    resourceName: "minio"
+    args: ["server", "/data", "--console-address", ":9001"]
+    bindings:
+      - port: 9000       # S3 API
+      - port: 9001       # Web Console
+    environment:
+      MINIO_ROOT_USER: "cloudkb_admin"
+      MINIO_ROOT_PASSWORD: "cloudkb_secret_password"
+    connectionStringKey: "ConnectionStrings:minio"
+
+# ═══════════════════════════════════════════════════════════
+# 2. Microservice Projects
+# ═══════════════════════════════════════════════════════════
+
+services:
+  # ── Yarp API Gateway ────────────────────────────────────
+  cloudkb-gateway:
+    projectName: "CloudKB.Gateway"
+    resourceName: "gateway"
+    bindings:
+      - scheme: http
+        port: 5000
+      - scheme: https
+        port: 5001
+    dependencies:
+      - "apiservice-indexing"
+      - "apiservice-chat"
+      - "apiservice-notification"
+
+  # ── Indexing API (Ingest) ───────────────────────────────
+  cloudkb-indexing-api:
+    projectName: "CloudKB.ApiService.Indexing"
+    resourceName: "apiservice-indexing"
+    bindings:
+      - scheme: http
+        port: 5100
+    dependencies:
+      - "minio"
+      - "rabbitmq"
+    environment:
+      S3_BUCKET_NAME: "knowledge-base"
+
+  # ── Background Index Worker ─────────────────────────────
+  cloudkb-index-worker:
+    projectName: "CloudKB.Worker.Indexer"
+    resourceName: "worker-indexer"
+    dependencies:
+      - "minio"
+      - "rabbitmq"
+      - "postgres"
+      - "redis"
+    environment:
+      S3_BUCKET_NAME: "knowledge-base"
+
+  # ── Notification SSE Service ────────────────────────────
+  cloudkb-notification-api:
+    projectName: "CloudKB.ApiService.Notification"
+    resourceName: "apiservice-notification"
+    bindings:
+      - scheme: http
+        port: 5200
+    dependencies:
+      - "redis"
+
+  # ── Chat QA Service (Read Pipeline) ─────────────────────
+  cloudkb-chat-api:
+    projectName: "CloudKB.ApiService.Chat"
+    resourceName: "apiservice-chat"
+    bindings:
+      - scheme: http
+        port: 5300
+    dependencies:
+      - "postgres"
+      - "redis"
+    environment:
+      OPENAI_MODEL_NAME: "gpt-4o-mini"
+      RETRIEVAL_SCORE_THRESHOLD: "0.5"
+      TOP_K_SECTIONS: "3"
+
+# ═══════════════════════════════════════════════════════════
+# 3. .NET Aspire AppHost Program.cs Reference
+# ═══════════════════════════════════════════════════════════
+#
+# The C# orchestrator MUST construct the graph as follows:
+#
+# var builder = DistributedApplication.CreateBuilder(args);
+#
+# // Infrastructure
+# var postgres = builder.AddPostgres("postgres").WithDataVolume();
+# var db = postgres.AddDatabase("cloudkb");
+# var redis = builder.AddRedis("redis");
+# var rabbitmq = builder.AddRabbitMQ("rabbitmq");
+# var minio = builder.AddContainer("minio", "minio/minio")
+#                     .WithArgs("server", "/data", "--console-address", ":9001")
+#                     .WithHttpEndpoint(port: 9000, targetPort: 9000, name: "s3")
+#                     .WithHttpEndpoint(port: 9001, targetPort: 9001, name: "console");
+#
+# // Downstream services
+# var indexingApi = builder.AddProject<Projects.CloudKB_ApiService_Indexing>("apiservice-indexing")
+#                          .WithReference(minio)
+#                          .WithReference(rabbitmq);
+#
+# var notificationApi = builder.AddProject<Projects.CloudKB_ApiService_Notification>("apiservice-notification")
+#                              .WithReference(redis);
+#
+# var chatApi = builder.AddProject<Projects.CloudKB_ApiService_Chat>("apiservice-chat")
+#                      .WithReference(db)
+#                      .WithReference(redis);
+#
+# var worker = builder.AddProject<Projects.CloudKB_Worker_Indexer>("worker-indexer")
+#                     .WithReference(minio)
+#                     .WithReference(rabbitmq)
+#                     .WithReference(db)
+#                     .WithReference(redis);
+#
+# // Gateway
+# builder.AddProject<Projects.CloudKB_Gateway>("gateway")
+#        .WithReference(indexingApi)
+#        .WithReference(notificationApi)
+#        .WithReference(chatApi);
+#
+# builder.Build().Run();

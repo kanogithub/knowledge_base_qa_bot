@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.3.5" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\CloudKB.ServiceDefaults\CloudKB.ServiceDefaults.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\CloudKB.ApiService.Chat\CloudKB.ApiService.Chat.csproj" />
+    <ProjectReference Include="..\CloudKB.ApiService.Indexing\CloudKB.ApiService.Indexing.csproj" />
+    <ProjectReference Include="..\CloudKB.ApiService.Notification\CloudKB.ApiService.Notification.csproj" />
+    <ProjectReference Include="..\CloudKB.Worker.Indexer\CloudKB.Worker.Indexer.csproj" />
+    <ProjectReference Include="..\CloudKB.Gateway\CloudKB.Gateway.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.3.5" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" Version="13.3.5" />
+    <PackageReference Include="Aspire.Hosting.RabbitMQ" Version="13.3.5" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.3.5" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

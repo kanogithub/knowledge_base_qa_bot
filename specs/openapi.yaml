@@ -1,0 +1,428 @@
+openapi: "3.1.0"
+info:
+  title: Cloud-KB — Distributed Multi-Tenant Knowledge Base API
+  version: "1.0.0"
+  description: |
+    OpenAPI specification for the Cloud-KB distributed multi-tenant Markdown
+    knowledge-base system built on .NET 10 / .NET Aspire 10.
+
+    This spec covers all synchronous HTTP endpoints exposed through the Yarp
+    API Gateway, including file indexing (write pipeline), grounded chat QA
+    (read pipeline), notification streaming, and health checks.
+
+    ## SDD Automation Targets
+    - **Backend (.NET 10):** `Microsoft.AspNetCore.OpenApi` generates Minimal
+      API endpoint stubs, strong-typed Request/Response DTOs, and Yarp Gateway
+      proxy route configuration.
+    - **Frontend (React):** `openapi-typescript` or `orval` generates
+      TypeScript type definitions and Axios/Fetch API client functions.
+  contact:
+    name: Cloud-KB Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:5000
+    description: Local development (Aspire AppHost)
+  - url: https://api.cloudkb.example.com
+    description: Production
+
+# ─────────────────────────────────────────────────────────
+# Reusable Security Scheme
+# ─────────────────────────────────────────────────────────
+security:
+  - BearerAuth: []
+
+# ─────────────────────────────────────────────────────────
+# Tags — map to microservices / bounded contexts
+# ─────────────────────────────────────────────────────────
+tags:
+  - name: Health
+    description: Liveness & readiness probes
+  - name: Indexing
+    description: "Epic 1 — Write Pipeline: async file ingestion"
+  - name: Chat
+    description: "Epic 2 — Read Pipeline: short-lived grounded QA streaming"
+  - name: Notifications
+    description: "Epic 1 — Long-lived SSE notification channel"
+
+# ─────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────
+paths:
+  # ── Health ──────────────────────────────────────────────
+  /api/health:
+    get:
+      operationId: healthCheck
+      tags: [Health]
+      summary: Liveness check
+      description: Returns 200 if the gateway and downstream services are alive.
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  # ── Indexing (Write Pipeline) ───────────────────────────
+  /api/index:
+    post:
+      operationId: submitIndexJob
+      tags: [Indexing]
+      summary: Upload Markdown files and trigger async knowledge compilation
+      description: |
+        Receives one or more Markdown files, streams them to S3/MinIO under
+        the tenant-isolated path `/{user_id}/raw/`, pushes a
+        `CompileKnowledgeTask` message to RabbitMQ, and immediately returns
+        **HTTP 202 Accepted** with a `taskId` for tracking.
+
+        The actual heavy-lifting (Markdown parsing, BM25 stats, index
+        refresh) happens asynchronously in the Index Worker.
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/IndexRequest"
+      responses:
+        "202":
+          description: Accepted — compilation job enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexAcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Chat (Read Pipeline) ────────────────────────────────
+  /api/chat:
+    post:
+      operationId: chatStream
+      tags: [Chat]
+      summary: Short-lived grounded QA with SSE token streaming
+      description: |
+        Performs in-memory BM25 retrieval against the tenant's cached
+        `TenantKbIndex`, fetches top-K section content from PostgreSQL,
+        injects a grounded system prompt, and streams the LLM answer
+        token-by-token via SSE.
+
+        ### Early-Exit Defence
+        If the highest BM25 score is below the configured threshold (0.5),
+        the endpoint immediately returns a refusal message **without**
+        calling PostgreSQL or the LLM API.
+
+        ### Connection Lifecycle
+        The SSE stream is **short-lived**: once the final token (including
+        source citations) is sent, the server actively closes the connection.
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: SSE token stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ChatStreamChunk"
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                default: "no-cache"
+            Connection:
+              schema:
+                type: string
+                default: "keep-alive"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Notifications (Long-Lived SSE & Logs) ────────────────
+  /api/notifications/stream:
+    get:
+      operationId: notificationStream
+      tags: [Notifications]
+      summary: Long-lived SSE channel for real-time index progress events
+      description: |
+        Establishes a persistent SSE connection per tenant. The Notification
+        Service subscribes to the Redis Pub/Sub channel
+        `ch:notifications:{user_id}` and pushes progress/completion events
+        to the frontend in real time.
+
+        A keep-alive heartbeat comment (`:ping`) is sent every 30 seconds
+        to prevent proxy/load-balancer timeouts.
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+      responses:
+        "200":
+          description: SSE event stream (long-lived)
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/NotificationEvent"
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                default: "no-cache"
+            Connection:
+              schema:
+                type: string
+                default: "keep-alive"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/notifications/logs:
+    get:
+      operationId: getIndexAuditLogs
+      tags: [Notifications]
+      summary: Get index mutation history logs for the tenant
+      description: |
+        Returns a list of index audit log records representing the changelog
+        (added, modified, deleted sections) of the tenant's knowledge base.
+        Logs are sorted chronologically (newest first).
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+      responses:
+        "200":
+          description: List of index audit logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexAuditLogResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+# ─────────────────────────────────────────────────────────
+# Components
+# ─────────────────────────────────────────────────────────
+components:
+  # ── Security Schemes ────────────────────────────────────
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token issued by the identity provider. The Yarp gateway
+        validates the token and extracts `user_id` into the `X-User-Id`
+        downstream header.
+
+  # ── Parameters ──────────────────────────────────────────
+  parameters:
+    XUserId:
+      name: X-User-Id
+      in: header
+      required: true
+      description: |
+        Tenant identifier injected by the Yarp API Gateway after JWT
+        validation. All downstream services use this as the isolation key.
+      schema:
+        type: string
+        example: "tenant-01"
+
+  # ── Schemas ─────────────────────────────────────────────
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          example: ok
+
+    # -- Indexing --
+    IndexRequest:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            type: string
+            format: binary
+          description: One or more Markdown (.md) files to ingest.
+
+    IndexAcceptedResponse:
+      type: object
+      required: [taskId, message]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+          description: Unique identifier for tracking the compilation job.
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        message:
+          type: string
+          example: "Knowledge compilation job enqueued."
+
+    # -- Chat --
+    ChatRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: The user's natural-language question.
+          example: "如何配置環境變數？"
+
+    ChatStreamChunk:
+      type: object
+      description: |
+        A single SSE data frame in the chat token stream.
+        When `isFinal` is true, the `sources` array contains grounded
+        citations and the server closes the connection.
+      required: [text, isFinal]
+      properties:
+        text:
+          type: string
+          description: Current generated token(s).
+          example: "您"
+        isFinal:
+          type: boolean
+          description: Whether this is the last chunk in the stream.
+          default: false
+        sources:
+          type: array
+          nullable: true
+          description: |
+            Present only when `isFinal == true`. Contains the grounded
+            source citations used to generate the answer.
+          items:
+            $ref: "#/components/schemas/SourceCitation"
+
+    SourceCitation:
+      type: object
+      required: [sectionId, fileName, heading]
+      properties:
+        sectionId:
+          type: string
+          description: "Composite key: `{user_id}#{filename}#{slugified-heading}`"
+          example: "tenant-01#refund_policy.md#refund-timeline"
+        fileName:
+          type: string
+          description: Original Markdown filename.
+          example: "refund_policy.md"
+        heading:
+          type: string
+          description: Section heading that was cited.
+          example: "Refund Timeline"
+        headingPath:
+          type: array
+          items:
+            type: string
+          description: Breadcrumb path of headings for context.
+          example: ["Refund Policy", "Refund Timeline"]
+        score:
+          type: number
+          format: double
+          description: BM25 relevance score for this section.
+          example: 2.47
+
+    # -- Notifications & Logs --
+    NotificationEvent:
+      type: object
+      description: |
+        A single SSE data frame on the long-lived notification channel.
+      required: [eventType, taskId, message]
+      properties:
+        eventType:
+          type: string
+          enum:
+            - IndexProcessing
+            - IndexCompleted
+            - IndexFailed
+          description: Type of lifecycle event.
+          example: "IndexCompleted"
+        taskId:
+          type: string
+          format: uuid
+          description: The compilation job identifier.
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        message:
+          type: string
+          description: Human-readable status message.
+          example: "您的知識庫已編譯完成！"
+        metadata:
+          type: object
+          nullable: true
+          description: Optional extension data (e.g., section count).
+          additionalProperties: true
+          example:
+            sectionsCompiled: 42
+            filesProcessed: 5
+
+    IndexAuditLogResponse:
+      type: object
+      required: [id, fileName, actionType, sectionsAffected, commitMessage, loggedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        fileName:
+          type: string
+          example: "refund_policy.md"
+        actionType:
+          type: string
+          enum: [ADDED, MODIFIED, DELETED]
+          example: "MODIFIED"
+        sectionsAffected:
+          type: integer
+          example: 3
+         commitMessage:
+          type: string
+          example: "Modified Heading: # Environment Setup"
+        loggedAt:
+          type: string
+          format: date-time
+          example: "2026-05-28T01:04:51Z"
+
+    # -- Errors --
+    ProblemDetails:
+      type: object
+      description: RFC 9457 Problem Details for HTTP APIs
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+
+  # ── Responses ───────────────────────────────────────────
+  responses:
+    BadRequest:
+      description: Invalid request payload
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"

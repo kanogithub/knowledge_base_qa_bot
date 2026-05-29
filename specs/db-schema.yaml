@@ -1,0 +1,528 @@
+# Cloud-KB — Database Schema Specification (EF Core 10 + PostgreSQL)
+#
+# This file serves as the **single source of truth** for the persistent
+# data layer. It defines all Entity Framework Core 10 entity classes,
+# relationships, indexes, and multi-tenant isolation strategies.
+#
+# ## SDD Automation Targets
+# - `dotnet ef migrations add` reads the DbContext/Fluent API configuration
+#   derived from this spec to auto-generate PostgreSQL migration scripts.
+# - CI/CD pipeline validates that the live DB schema matches this spec
+#   via `dotnet ef migrations has-pending-model-changes`.
+#
+# Format: Pseudo-C# entity definitions with Fluent API annotations.
+# The actual implementation MUST mirror these definitions exactly.
+
+# ═══════════════════════════════════════════════════════════
+# Database: cloudkb (PostgreSQL 16+)
+# Schema: public
+# Multi-Tenant Strategy: Row-Level Isolation via TenantId column
+# ═══════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────
+# Entity: TenantSection
+# Table: tenant_sections
+# Description:
+#   Core knowledge unit. Each row represents a single Markdown
+#   heading section compiled from a tenant's uploaded files.
+#   Contains the raw content, tokenised word list, and heading
+#   breadcrumb path for BM25 scoring.
+# ───────────────────────────────────────────────────────────
+
+entity: TenantSection
+table: tenant_sections
+columns:
+  - name: id
+    type: text
+    nullable: false
+    description: |
+      Composite primary key: {tenant_id}#{file_name}#{slugified_heading}
+      Example: "tenant-01#refund_policy.md#refund-timeline"
+
+  - name: tenant_id
+    type: text
+    nullable: false
+    description: |
+      Tenant isolation key. Matches the X-User-Id header injected by
+      the Yarp API Gateway. ALL queries MUST filter on this column.
+
+  - name: file_name
+    type: text
+    nullable: false
+    description: |
+      Original Markdown filename as uploaded by the user.
+      Example: "refund_policy.md"
+
+  - name: heading
+    type: text
+    nullable: false
+    description: |
+      The Markdown heading text for this section.
+      Example: "Refund Timeline"
+
+  - name: heading_path
+    type: jsonb
+    nullable: false
+    default: "[]"
+    description: |
+      JSON array of ancestor headings forming a breadcrumb path.
+      Used for Heading Boost scoring in BM25 retrieval.
+      Example: ["Refund Policy", "Refund Timeline"]
+
+  - name: content
+    type: text
+    nullable: false
+    description: |
+      Raw Markdown content of this section (everything under the
+      heading until the next heading of equal or higher level).
+
+  - name: tokens
+    type: jsonb
+    nullable: false
+    default: "[]"
+    description: |
+      JSON array of lowercase, stop-word-filtered tokens produced by
+      .NET 10 SearchValues<string> tokeniser. Used for BM25 TF
+      computation during index compilation.
+      Example: ["refund", "timeline", "business", "days", "process"]
+
+  - name: token_count
+    type: integer
+    nullable: false
+    default: 0
+    description: |
+      Pre-computed count of tokens (length of the tokens array).
+      Stored separately for fast avgdl computation without
+      deserialising the full token array.
+
+  - name: created_at
+    type: timestamp with time zone
+    nullable: false
+    default: "now()"
+    description: Row creation timestamp (UTC).
+
+  - name: updated_at
+    type: timestamp with time zone
+    nullable: false
+    default: "now()"
+    description: Last modification timestamp (UTC).
+
+primary_key:
+  columns: [id]
+
+indexes:
+  # ── Multi-Tenant Query Index (B-Tree) ───────────────────
+  - name: ix_tenant_sections_tenant_id
+    columns: [tenant_id]
+    type: btree
+    description: |
+      Primary tenant isolation index. Every query in the system filters
+      on tenant_id first, making this the most critical index for
+      row-level multi-tenant isolation and query performance.
+
+  # ── Tenant + File Compound Index ────────────────────────
+  - name: ix_tenant_sections_tenant_file
+    columns: [tenant_id, file_name]
+    type: btree
+    description: |
+      Supports efficient bulk deletion and re-indexing of all sections
+      belonging to a specific file within a tenant's knowledge base.
+
+  # ── Full-Text Search (GIN) — Optional Enhancement ──────
+  - name: ix_tenant_sections_content_gin
+    columns: [content]
+    type: gin
+    using: "gin(to_tsvector('english', content))"
+    description: |
+      Optional GIN index for PostgreSQL full-text search fallback.
+      Primary retrieval is via in-memory BM25 on the Redis-cached
+      TenantKbIndex, but this index enables direct DB-level search
+      for admin/debug tooling.
+
+# ───────────────────────────────────────────────────────────
+# Entity: IndexCompilationJob
+# Table: index_compilation_jobs
+# Description:
+#   Audit trail for every knowledge compilation task. Tracks
+#   lifecycle from enqueue → processing → completed/failed.
+#   Enables job replay, debugging, and SLA monitoring.
+# ───────────────────────────────────────────────────────────
+
+entity: IndexCompilationJob
+table: index_compilation_jobs
+columns:
+  - name: task_id
+    type: uuid
+    nullable: false
+    description: |
+      Primary key. Matches the taskId in the RabbitMQ
+      CompileKnowledgeTask message and the OpenAPI response.
+
+  - name: tenant_id
+    type: text
+    nullable: false
+    description: Tenant isolation key.
+
+  - name: status
+    type: text
+    nullable: false
+    default: "'Pending'"
+    check: "status IN ('Pending', 'Processing', 'Completed', 'Failed')"
+    description: |
+      Current lifecycle state of the compilation job.
+      Transitions: Pending → Processing → Completed | Failed
+
+  - name: s3_storage_path
+    type: text
+    nullable: false
+    description: |
+      S3/MinIO base path for the uploaded files.
+      Pattern: /{tenant_id}/raw/
+
+  - name: file_names
+    type: jsonb
+    nullable: false
+    default: "[]"
+    description: |
+      JSON array of Markdown filenames included in this batch.
+
+  - name: sections_compiled
+    type: integer
+    nullable: true
+    description: |
+      Total sections produced. Populated on completion.
+
+  - name: files_processed
+    type: integer
+    nullable: true
+    description: |
+      Number of files successfully processed. Populated on completion.
+
+  - name: compile_duration_ms
+    type: integer
+    nullable: true
+    description: |
+      Wall-clock compilation time in milliseconds.
+
+  - name: error_code
+    type: text
+    nullable: true
+    description: |
+      Machine-readable error classification if failed.
+      Values: LOCK_TIMEOUT, S3_READ_FAILURE, PARSE_ERROR, DB_WRITE_FAILURE
+
+  - name: error_detail
+    type: text
+    nullable: true
+    description: Detailed error message for debugging.
+
+  - name: requested_at
+    type: timestamp with time zone
+    nullable: false
+    default: "now()"
+    description: When the user initiated the upload.
+
+  - name: started_at
+    type: timestamp with time zone
+    nullable: true
+    description: When the worker began processing.
+
+  - name: completed_at
+    type: timestamp with time zone
+    nullable: true
+    description: When the job reached a terminal state.
+
+primary_key:
+  columns: [task_id]
+
+indexes:
+  - name: ix_compilation_jobs_tenant_id
+    columns: [tenant_id]
+    type: btree
+    description: Filter jobs by tenant for audit dashboard.
+
+  - name: ix_compilation_jobs_status
+    columns: [tenant_id, status]
+    type: btree
+    description: |
+      Support queries like "show all pending jobs for tenant X".
+
+  - name: ix_compilation_jobs_requested_at
+    columns: [requested_at]
+    type: btree
+    description: Chronological ordering for job history views.
+
+# ───────────────────────────────────────────────────────────
+# Entity: TenantFile
+# Table: tenant_files
+# Description:
+#   Registry of all Markdown files uploaded by each tenant.
+#   Tracks S3 storage location, file size, and indexing status.
+# ───────────────────────────────────────────────────────────
+
+entity: TenantFile
+table: tenant_files
+columns:
+  - name: id
+    type: uuid
+    nullable: false
+    default: "gen_random_uuid()"
+    description: Auto-generated primary key.
+
+  - name: tenant_id
+    type: text
+    nullable: false
+    description: Tenant isolation key.
+
+  - name: file_name
+    type: text
+    nullable: false
+    description: |
+      Original filename. Unique within a tenant's namespace.
+
+  - name: s3_key
+    type: text
+    nullable: false
+    description: |
+      Full S3 object key.
+      Pattern: /{tenant_id}/raw/{file_name}
+
+  - name: file_size_bytes
+    type: bigint
+    nullable: false
+    description: File size in bytes at upload time.
+
+  - name: content_hash
+    type: text
+    nullable: false
+    description: |
+      SHA-256 hash of file content. Used for change detection
+      during re-indexing to skip unchanged files.
+
+  - name: is_indexed
+    type: boolean
+    nullable: false
+    default: "false"
+    description: Whether this file has been successfully compiled.
+
+  - name: last_indexed_at
+    type: timestamp with time zone
+    nullable: true
+    description: Timestamp of the last successful compilation.
+
+  - name: uploaded_at
+    type: timestamp with time zone
+    nullable: false
+    default: "now()"
+    description: Upload timestamp.
+
+primary_key:
+  columns: [id]
+
+unique_constraints:
+  - name: uq_tenant_files_tenant_filename
+    columns: [tenant_id, file_name]
+    description: |
+      A tenant cannot have two files with the same name.
+      Re-uploading the same filename triggers an upsert.
+
+indexes:
+  - name: ix_tenant_files_tenant_id
+    columns: [tenant_id]
+    type: btree
+
+# ───────────────────────────────────────────────────────────
+# Entity: TenantFileState
+# Table: tenant_file_states
+# Description:
+#   Snapshot of the last indexed state of a file, used for fast
+#   incremental hash comparison.
+# ───────────────────────────────────────────────────────────
+
+entity: TenantFileState
+table: tenant_file_states
+columns:
+  - name: id
+    type: text
+    nullable: false
+    description: |
+      Composite primary key: {tenant_id}#{file_name}
+      Example: "tenant-01#refund_policy.md"
+
+  - name: tenant_id
+    type: text
+    nullable: false
+    description: Tenant isolation key.
+
+  - name: file_name
+    type: text
+    nullable: false
+    description: Original filename.
+
+  - name: content_hash
+    type: text
+    nullable: false
+    description: |
+      SHA-256 hash of the Markdown file content during last successful indexing.
+
+  - name: last_indexed_at
+    type: timestamp with time zone
+    nullable: false
+    default: "now()"
+    description: Timestamp when the file was last compiled.
+
+primary_key:
+  columns: [id]
+
+indexes:
+  - name: ix_tenant_file_states_tenant_id
+    columns: [tenant_id]
+    type: btree
+
+# ───────────────────────────────────────────────────────────
+# Entity: IndexAuditLog
+# Table: index_audit_logs
+# Description:
+#   Index mutation history (Changelog) tracking added, modified,
+#   and deleted sections.
+# ───────────────────────────────────────────────────────────
+
+entity: IndexAuditLog
+table: index_audit_logs
+columns:
+  - name: id
+    type: uuid
+    nullable: false
+    default: "gen_random_uuid()"
+    description: Primary key.
+
+  - name: tenant_id
+    type: text
+    nullable: false
+    description: Tenant isolation key.
+
+  - name: file_name
+    type: text
+    nullable: false
+    description: Original filename.
+
+  - name: action_type
+    type: text
+    nullable: false
+    check: "action_type IN ('ADDED', 'MODIFIED', 'DELETED')"
+    description: Type of mutation action.
+
+  - name: sections_affected
+    type: integer
+    nullable: false
+    default: 0
+    description: Number of heading sections affected by this change.
+
+  - name: commit_message
+    type: text
+    nullable: false
+    description: Human-readable summary of the diff.
+
+  - name: logged_at
+    type: timestamp with time zone
+    nullable: false
+    default: "now()"
+    description: Change commit timestamp.
+
+primary_key:
+  columns: [id]
+
+indexes:
+  - name: ix_index_audit_logs_tenant_logged
+    columns: [tenant_id, logged_at]
+    type: btree
+    sort: [asc, desc]
+    description: Supporting chronological audit views per tenant.
+
+# ───────────────────────────────────────────────────────────
+# EF Core 10 — DbContext Configuration (Reference)
+# ───────────────────────────────────────────────────────────
+#
+# The following pseudo-code shows the expected Fluent API
+# configuration. The actual C# implementation MUST match.
+#
+# public class CloudKbDbContext : DbContext
+# {
+#     public DbSet<TenantSection> TenantSections => Set<TenantSection>();
+#     public DbSet<IndexCompilationJob> IndexCompilationJobs => Set<IndexCompilationJob>();
+#     public DbSet<TenantFile> TenantFiles => Set<TenantFile>();
+#     public DbSet<TenantFileState> TenantFileStates => Set<TenantFileState>();
+#     public DbSet<IndexAuditLog> IndexAuditLogs => Set<IndexAuditLog>();
+#
+#     protected override void OnModelCreating(ModelBuilder modelBuilder)
+#     {
+#         // ── TenantSection ──
+#         modelBuilder.Entity<TenantSection>(e =>
+#         {
+#             e.ToTable("tenant_sections");
+#             e.HasKey(x => x.Id);
+#             e.Property(x => x.HeadingPath).HasColumnType("jsonb");
+#             e.Property(x => x.Tokens).HasColumnType("jsonb");
+#             e.HasIndex(x => x.TenantId).HasDatabaseName("ix_tenant_sections_tenant_id");
+#             e.HasIndex(x => new { x.TenantId, x.FileName })
+#              .HasDatabaseName("ix_tenant_sections_tenant_file");
+#         });
+#
+#         // ── IndexCompilationJob ──
+#         modelBuilder.Entity<IndexCompilationJob>(e =>
+#         {
+#             e.ToTable("index_compilation_jobs");
+#             e.HasKey(x => x.TaskId);
+#             e.Property(x => x.FileNames).HasColumnType("jsonb");
+#             e.HasIndex(x => x.TenantId)
+#              .HasDatabaseName("ix_compilation_jobs_tenant_id");
+#             e.HasIndex(x => new { x.TenantId, x.Status })
+#              .HasDatabaseName("ix_compilation_jobs_status");
+#             e.HasIndex(x => x.RequestedAt)
+#              .HasDatabaseName("ix_compilation_jobs_requested_at");
+#         });
+#
+#         // ── TenantFile ──
+#         modelBuilder.Entity<TenantFile>(e =>
+#         {
+#             e.ToTable("tenant_files");
+#             e.HasKey(x => x.Id);
+#             e.HasIndex(x => new { x.TenantId, x.FileName })
+#              .IsUnique()
+#              .HasDatabaseName("uq_tenant_files_tenant_filename");
+#             e.HasIndex(x => x.TenantId)
+#              .HasDatabaseName("ix_tenant_files_tenant_id");
+#         });
+#
+#         // ── TenantFileState ──
+#         modelBuilder.Entity<TenantFileState>(e =>
+#         {
+#             e.ToTable("tenant_file_states");
+#             e.HasKey(x => x.Id);
+#             e.HasIndex(x => x.TenantId)
+#              .HasDatabaseName("ix_tenant_file_states_tenant_id");
+#         });
+#
+#         // ── IndexAuditLog ──
+#         modelBuilder.Entity<IndexAuditLog>(e =>
+#         {
+#             e.ToTable("index_audit_logs");
+#             e.HasKey(x => x.Id);
+#             e.HasIndex(x => new { x.TenantId, x.LoggedAt })
+#              .HasDatabaseName("ix_index_audit_logs_tenant_logged");
+#         });
+#     }
+# }
+#
+# ───────────────────────────────────────────────────────────
+# Migration Commands (SDD Automation)
+# ───────────────────────────────────────────────────────────
+#
+# # Generate migration from this spec:
+# dotnet ef migrations add InitialCreate -p CloudKB.Infrastructure -s CloudKB.AppHost
+#
+# # Apply to local PostgreSQL:
+# dotnet ef database update -p CloudKB.Infrastructure -s CloudKB.AppHost
+#
+# # Verify no pending model changes (CI gate):
+# dotnet ef migrations has-pending-model-changes -p CloudKB.Infrastructure -s CloudKB.AppHost

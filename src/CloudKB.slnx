@@ -1,0 +1,16 @@
+<Solution>
+  <Project Path="../tests/CloudKB.Tests.BDD/CloudKB.Tests.BDD.csproj" />
+  <Project Path="CloudKB.AppHost/CloudKB.AppHost.csproj" />
+  <Project Path="CloudKB.Infrastructure/CloudKB.Infrastructure.csproj" />
+  <Project Path="CloudKB.ServiceDefaults/CloudKB.ServiceDefaults.csproj" />
+  <Project Path="CloudKB.ApiService.Chat/CloudKB.ApiService.Chat.csproj" />
+  <Project Path="CloudKB.Gateway/CloudKB.Gateway.csproj" />
+  <Project Path="CloudKB.ApiService.Indexing/CloudKB.ApiService.Indexing.csproj" />
+  <Project Path="CloudKB.Worker.Indexer/CloudKB.Worker.Indexer.csproj" />
+  <Project Path="CloudKB.SharedKernel/CloudKB.SharedKernel.csproj" />
+  <Project Path="CloudKB.ApiService.Notification/CloudKB.ApiService.Notification.csproj" />
+</Solution>
+
+
+
+
