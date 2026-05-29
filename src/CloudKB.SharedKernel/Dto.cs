@@ -6,7 +6,7 @@ namespace CloudKB.SharedKernel;
 // Synchronous Request/Response DTOs
 public record ChatRequest(string Query);
 public record ChatStreamChunk(string Text, bool IsFinal, List<SourceCitation>? Sources);
-public record SourceCitation(string SectionId, string FileName, string Heading, List<string>? HeadingPath, double? Score);
+public record SourceCitation(string SectionId, string FileName, string Heading, List<string>? HeadingPath, double? Score, string? Snippet);
 public record NotificationEvent(string EventType, string TaskId, string Message, object? Metadata);
 public record IndexAcceptedResponse(Guid TaskId, string Message);
 public record IndexAuditLogResponse(Guid Id, string FileName, string ActionType, int SectionsAffected, string CommitMessage, DateTime LoggedAt);

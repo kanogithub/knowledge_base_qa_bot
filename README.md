@@ -28,6 +28,58 @@ The frontend is built using React with Vite.
 
 ---
 
+## Configuration Guide
+
+Before running the project, you need to configure the AI API Key and optional BM25 search parameters.
+
+### 1. LLM API Key Configuration (OpenAI or Gemini)
+The RAG Chat engine uses Gemini or OpenAI to generate answers. The priority of providers is set under `LlmProviders:Priority` inside `src/CloudKB.ApiService.Chat/appsettings.json`.
+
+You can set your API Key in **two ways**:
+
+#### Method A: Using .NET User Secrets (Recommended & Safest)
+Using User Secrets keeps your keys safely stored outside the Git repository. Open your terminal at the project root and run:
+* **For Gemini (Default)**:
+  ```bash
+  dotnet user-secrets set "LlmProviders:Gemini:ApiKey" "YOUR_GEMINI_API_KEY" --project src/CloudKB.ApiService.Chat
+  ```
+* **For OpenAI**:
+  ```bash
+  dotnet user-secrets set "LlmProviders:OpenAI:ApiKey" "YOUR_OPENAI_API_KEY" --project src/CloudKB.ApiService.Chat
+  ```
+
+#### Method B: Modifying `appsettings.json`
+Directly open [appsettings.json](file:///c:/[Other%20Learning%2520Sources]/[build-moat]/live-sessions-reflection/knowledge_base_qa_bot/src/CloudKB.ApiService.Chat/appsettings.json) and enter your key:
+```json
+  "LlmProviders": {
+    "Priority": [ "Gemini", "OpenAI" ],
+    "Gemini": {
+      "ApiKey": "YOUR_GEMINI_API_KEY",
+      "ModelName": "gemini-2.5-flash",
+      "Endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/"
+    },
+    "OpenAI": {
+      "ApiKey": "YOUR_OPENAI_API_KEY",
+      "ModelName": "gpt-4o-mini",
+      "Endpoint": "https://api.openai.com/v1/"
+    }
+  }
+```
+
+---
+
+### 2. BM25 & Retrieval Parameters Configuration
+You can customize the BM25 scoring behavior inside the `"BM25"` section of `src/CloudKB.ApiService.Chat/appsettings.json` (or override them using User Secrets).
+
+* **`RetrievalScoreThreshold`** (Default: `0.5`):
+  * **Critical Setting**: If the calculated BM25 relevance score for all indexed document sections falls below this threshold, the Chat engine exits early and replies: *"我無法從現有的知識庫中確認此訊息。"* (I cannot confirm this information from the existing knowledge base).
+  * *Tip: Set this to `0.0` during testing if you want to force grounding references regardless of similarity scores.*
+* **`K1`** (Default: `1.2`) & **`B`** (Default: `0.75`): Standard BM25 term frequency saturation and document length normalization scaling factors.
+* **`HeadingBoost`** (Default: `1.5`): A multiplier applied to the score when search terms match document header titles (headings).
+* **`TopK`** (Default: `3`): The maximum number of highest-scoring relevant sections passed to the LLM context.
+
+---
+
 ## Getting Started (Development Mode)
 
 ### Step 1: Install Frontend Dependencies & Build

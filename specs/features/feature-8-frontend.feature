@@ -103,6 +103,7 @@ Feature: Integrated Knowledge Base Dashboard & Chat Interface
     And the message sources list should display "(Score: X.XX)" next to the cited file name
     When the user clicks the "refund_policy.md#refund-timeline" citation link
     Then a details drawer should slide in showing the cited section filename, heading details, and "BM25 Retrieval Score: X.XXXX"
+    And the drawer should display a preview snippet of approximately 50 words from the cited section content.
 
   Scenario: Tenant deletes an uploaded file successfully
     Given the user is logged in as "tenant-01"

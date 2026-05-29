@@ -94,7 +94,8 @@ public class ChatService : IChatService
                         FileName: section.FileName,
                         Heading: section.Heading,
                         HeadingPath: section.HeadingPath,
-                        Score: ss.Score
+                        Score: ss.Score,
+                        Snippet: GetSnippet(section.Content, 50)
                     ));
                 }
             }
@@ -168,5 +169,13 @@ public class ChatService : IChatService
         {
             Console.WriteLine($"[ChatService] Chat stream connection cancelled by client for tenant {tenantId}");
         }
+    }
+
+    private static string GetSnippet(string content, int maxWords)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return "";
+        var words = content.Split(new[] { ' ', '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length <= maxWords) return content;
+        return string.Join(" ", words.Take(maxWords)) + "...";
     }
 }

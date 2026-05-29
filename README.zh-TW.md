@@ -28,6 +28,58 @@ Project Cloud-KB 是一個雲端原生、分散式的 RAG (檢索增強生成) �
 
 ---
 
+## 專案配置指南
+
+在啟動專案之前，你需要配置 AI API 密鑰以及調整 BM25 檢索參數。
+
+### 1. AI 代理 API Key 配置 (OpenAI 或 Gemini)
+RAG 對話引擎預設支援 Gemini 與 OpenAI 生成回答。你可以在 [appsettings.json](file:///c:/[Other%20Learning%2520Sources]/[build-moat]/live-sessions-reflection/knowledge_base_qa_bot/src/CloudKB.ApiService.Chat/appsettings.json) 的 `LlmProviders:Priority` 來決定模型的優先載入順序。
+
+你可以選擇**以下兩種方式之一**來設置 API Key：
+
+#### 方法 A：使用 .NET User Secrets 安全配置 (推薦)
+使用 User Secrets 可以將金鑰存在本機的加密區，避免祕鑰被意外 commit 到 Git 上。請在終端機中，切換到專案目錄並執行：
+* **配置 Gemini (預設)**:
+  ```bash
+  dotnet user-secrets set "LlmProviders:Gemini:ApiKey" "你的_GEMINI_API_KEY" --project src/CloudKB.ApiService.Chat
+  ```
+* **配置 OpenAI**:
+  ```bash
+  dotnet user-secrets set "LlmProviders:OpenAI:ApiKey" "你的_OPENAI_API_KEY" --project src/CloudKB.ApiService.Chat
+  ```
+
+#### 方法 B：直接修改 `appsettings.json`
+直接開啟 `src/CloudKB.ApiService.Chat/appsettings.json` 並修改：
+```json
+  "LlmProviders": {
+    "Priority": [ "Gemini", "OpenAI" ],
+    "Gemini": {
+      "ApiKey": "你的_GEMINI_API_KEY",
+      "ModelName": "gemini-2.5-flash",
+      "Endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/"
+    },
+    "OpenAI": {
+      "ApiKey": "你的_OPENAI_API_KEY",
+      "ModelName": "gpt-4o-mini",
+      "Endpoint": "https://api.openai.com/v1/"
+    }
+  }
+```
+
+---
+
+### 2. BM25 檢索閾值與核心引數設定
+你可以透過修改 `src/CloudKB.ApiService.Chat/appsettings.json` 中的 `"BM25"` 區塊來客製化搜尋引擎的精準度（亦可使用 User Secrets 覆寫）：
+
+* **`RetrievalScoreThreshold`** (預設值：`0.5`):
+  * **關鍵設定**：若使用者提問後，系統經 BM25 算出的最高文檔關聯分數「低於」此閥值，則後端會拒絕回答，並回傳：「*我無法從現有的知識庫中確認此訊息。*」。
+  * *測試技巧：在開發測試階段，若希望不論相似度分數高低皆強制提供引用回答，可將此閥值設定為 `0.0`。*
+* **`K1`** (預設值：`1.2`) 與 **`B`** (預設值：`0.75`): 用於調整詞頻飽和度以及文檔長度歸一化幅度的 BM25 標準參數。
+* **`HeadingBoost`** (預設值：`1.5`): 若提問詞匹配到文檔的標題（Heading），會給予此加權乘數，提升標題被引用的權重。
+* **`TopK`** (預設值：`3`): 檢索出關聯度最高的前幾筆文檔段落送進 LLM 上下文（Context）中生成答覆。
+
+---
+
 ## 快速開始 (開發模式)
 
 ### 步驟 1: 安裝前端套件並進行編譯

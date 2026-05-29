@@ -25,7 +25,7 @@ interface ChatMessage {
   sender: 'user' | 'ai';
   text: string;
   isStreaming?: boolean;
-  sources?: Array<{ fileName: string; heading: string; score?: number }>;
+  sources?: Array<{ fileName: string; heading: string; score?: number; snippet?: string }>;
 }
 
 
@@ -48,7 +48,7 @@ export default function App() {
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   
   // Active citation details drawer
-  const [activeCitation, setActiveCitation] = useState<{ fileName: string; heading: string; score?: number } | null>(null);
+  const [activeCitation, setActiveCitation] = useState<{ fileName: string; heading: string; score?: number; snippet?: string } | null>(null);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSourcePolyfill | null>(null);
@@ -425,11 +425,11 @@ export default function App() {
   };
 
   // Click citation handler
-  const handleCitationClick = (citationText: string, score?: number) => {
+  const handleCitationClick = (citationText: string, score?: number, snippet?: string) => {
     const decoded = decodeURIComponent(citationText);
     const parts = decoded.split('#');
     if (parts.length === 2) {
-      setActiveCitation({ fileName: parts[0], heading: parts[1], score });
+      setActiveCitation({ fileName: parts[0], heading: parts[1], score, snippet });
     }
   };
 
@@ -758,6 +758,7 @@ export default function App() {
                                     const decoded = decodeURIComponent(rawCitation);
                                     const parts = decoded.split('#');
                                     let matchedScore: number | undefined;
+                                    let matchedSnippet: string | undefined;
                                     if (parts.length === 2 && msg.sources) {
                                       const matched = msg.sources.find(
                                         s => s.fileName.toLowerCase() === parts[0].toLowerCase() &&
@@ -766,10 +767,11 @@ export default function App() {
                                               parts[1].toLowerCase().includes(s.heading.toLowerCase()))
                                       );
                                       matchedScore = matched?.score;
+                                      matchedSnippet = matched?.snippet;
                                     }
                                     return (
                                       <button
-                                        onClick={() => handleCitationClick(rawCitation, matchedScore)}
+                                        onClick={() => handleCitationClick(rawCitation, matchedScore, matchedSnippet)}
                                         className="align-super text-[9px] bg-slate-750/80 hover:bg-slate-700 text-blue-400 hover:text-blue-350 px-1.5 py-0.5 rounded ml-0.5 transition font-semibold font-mono border border-slate-700/40"
                                       >
                                         {children}
@@ -792,7 +794,7 @@ export default function App() {
                               {msg.sources.map((src, sIdx) => (
                                 <button
                                   key={sIdx}
-                                  onClick={() => handleCitationClick(`${src.fileName}#${src.heading}`, src.score)}
+                                  onClick={() => handleCitationClick(`${src.fileName}#${src.heading}`, src.score, src.snippet)}
                                   className="bg-slate-700/60 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] px-2.5 py-1 rounded transition font-mono border border-slate-650 flex items-start text-left gap-1.5 max-w-full break-all"
                                 >
                                   <span className="text-blue-400 font-bold shrink-0">[{sIdx + 1}]</span>
@@ -859,6 +861,11 @@ export default function App() {
                 <p>Citing source content section `#{activeCitation.heading}` from file `{activeCitation.fileName}`.</p>
                 {activeCitation.score !== undefined && (
                   <p className="mt-1.5 text-emerald-400 font-semibold">BM25 Retrieval Score: {activeCitation.score.toFixed(4)}</p>
+                )}
+                {activeCitation.snippet && (
+                  <div className="mt-3 p-3 bg-slate-900/80 border border-slate-800 rounded-lg text-slate-300 text-xs italic leading-relaxed whitespace-pre-wrap">
+                    "{activeCitation.snippet}"
+                  </div>
                 )}
                 <p className="mt-2 text-slate-500 text-[10px] italic">Note: Citations are highlighted dynamically in the chat dialogue above.</p>
               </div>

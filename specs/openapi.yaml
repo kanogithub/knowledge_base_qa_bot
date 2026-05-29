@@ -499,6 +499,10 @@ components:
           format: double
           description: BM25 relevance score for this section.
           example: 2.47
+        snippet:
+          type: string
+          description: "A preview snippet (approx. 50 words) from the cited section's content."
+          example: "This is the content snippet from the knowledge document..."
 
     # -- Notifications & Logs --
     NotificationEvent:

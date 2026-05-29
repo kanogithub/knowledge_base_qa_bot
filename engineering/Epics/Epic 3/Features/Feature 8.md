@@ -21,7 +21,7 @@ Provides the central console (Dashboard) for users to interact with the system. 
   - The first chunk contains the citations metadata list. The UI stores this list in state.
   - Subsequent chunks contain text tokens, which are appended to the assistant's message bubble with a typewriter effect.
   - Any citation string matching the format `[filename#heading]` is parsed and rendered as an interactive, clickable link/badge.
-  - Clicking a citation badge opens a sidebar drawer showing the exact text content of the cited section.
+  - Clicking a citation badge opens a sidebar drawer showing the BM25 retrieval score and a 50-word preview snippet of the cited section content.
 * **User Self-Registration Flow:**
   - Adds a toggleable "Sign Up" form allowing new tenant users to create credentials.
   - Client validates password matching and length (minimum 6 characters).
