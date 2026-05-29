@@ -49,7 +49,7 @@ Using User Secrets keeps your keys safely stored outside the Git repository. Ope
   ```
 
 #### Method B: Modifying `appsettings.json`
-Directly open [appsettings.json](file:///c:/[Other%20Learning%2520Sources]/[build-moat]/live-sessions-reflection/knowledge_base_qa_bot/src/CloudKB.ApiService.Chat/appsettings.json) and enter your key:
+Directly open [appsettings.json](./src/CloudKB.ApiService.Chat/appsettings.json) and enter your key:
 ```json
   "LlmProviders": {
     "Priority": [ "Gemini", "OpenAI" ],

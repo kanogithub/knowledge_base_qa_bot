@@ -33,7 +33,7 @@ Project Cloud-KB 是一個雲端原生、分散式的 RAG (檢索增強生成) �
 在啟動專案之前，你需要配置 AI API 密鑰以及調整 BM25 檢索參數。
 
 ### 1. AI 代理 API Key 配置 (OpenAI 或 Gemini)
-RAG 對話引擎預設支援 Gemini 與 OpenAI 生成回答。你可以在 [appsettings.json](file:///c:/[Other%20Learning%2520Sources]/[build-moat]/live-sessions-reflection/knowledge_base_qa_bot/src/CloudKB.ApiService.Chat/appsettings.json) 的 `LlmProviders:Priority` 來決定模型的優先載入順序。
+RAG 對話引擎預設支援 Gemini 與 OpenAI 生成回答。你可以在 [appsettings.json](./src/CloudKB.ApiService.Chat/appsettings.json) 的 `LlmProviders:Priority` 來決定模型的優先載入順序。
 
 你可以選擇**以下兩種方式之一**來設置 API Key：
 
