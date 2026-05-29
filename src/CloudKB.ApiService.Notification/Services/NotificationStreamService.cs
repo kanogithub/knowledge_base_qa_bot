@@ -42,6 +42,10 @@ public class NotificationStreamService : INotificationStreamService
         {
             await WriteEventsLoopAsync(response, eventQueue.Reader, ct);
         }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine($"[StreamService] Connection cancelled by client for tenant {tenantId}");
+        }
         finally
         {
             Console.WriteLine("[StreamService] StreamEventsAsync finally block, unsubscribing...");

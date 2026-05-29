@@ -9,6 +9,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
+using StackExchange.Redis;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +20,13 @@ builder.AddServiceDefaults();
 // Database
 builder.Services.AddDbContext<CloudKbDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("cloudkb")));
+
+// Redis
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+{
+    var connectionString = builder.Configuration.GetConnectionString("redis") ?? "localhost:6379";
+    return ConnectionMultiplexer.Connect(connectionString);
+});
 
 // RabbitMQ Connection
 builder.Services.AddSingleton<IConnection>(sp =>
@@ -111,6 +120,123 @@ app.MapPost("/api/index", async (
     return Results.Accepted(value: result); // HTTP 202
 })
 .DisableAntiforgery();
+
+app.MapGet("/api/index/files", async (
+    HttpContext httpContext,
+    CloudKbDbContext dbContext) =>
+{
+    var tenantId = httpContext.Request.Headers["X-User-Id"].ToString();
+    if (string.IsNullOrWhiteSpace(tenantId))
+        return Results.Problem("Missing X-User-Id header", statusCode: 401);
+
+    var files = await dbContext.TenantFiles
+        .Where(f => f.TenantId == tenantId)
+        .OrderByDescending(f => f.UploadedAt)
+        .Select(f => new
+        {
+            f.FileName,
+            f.FileSizeBytes,
+            f.IsIndexed,
+            f.UploadedAt
+        })
+        .ToListAsync();
+
+    return Results.Ok(files);
+});
+
+app.MapDelete("/api/index/{fileName}", async (
+    string fileName,
+    HttpContext httpContext,
+    CloudKbDbContext dbContext,
+    IStorageService storageService,
+    IConnectionMultiplexer redis,
+    CancellationToken ct) =>
+{
+    var tenantId = httpContext.Request.Headers["X-User-Id"].ToString();
+    if (string.IsNullOrWhiteSpace(tenantId))
+        return Results.Problem("Missing X-User-Id header", statusCode: 401);
+
+    if (string.IsNullOrWhiteSpace(fileName))
+        return Results.Problem("Filename cannot be empty.", statusCode: 400);
+
+    var file = await dbContext.TenantFiles
+        .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.FileName == fileName, ct);
+
+    if (file == null)
+        return Results.NotFound(new { message = $"File {fileName} not found." });
+
+    // 1. Delete associated sections, states, and the file record from DB
+    var sectionsToDelete = await dbContext.TenantSections
+        .Where(s => s.TenantId == tenantId && s.FileName == fileName)
+        .ToListAsync(ct);
+
+    dbContext.TenantSections.RemoveRange(sectionsToDelete);
+
+    var fileState = await dbContext.TenantFileStates
+        .FirstOrDefaultAsync(fs => fs.TenantId == tenantId && fs.FileName == fileName, ct);
+    if (fileState != null)
+    {
+        dbContext.TenantFileStates.Remove(fileState);
+    }
+
+    dbContext.TenantFiles.Remove(file);
+
+    // 2. Log audit event
+    dbContext.IndexAuditLogs.Add(new IndexAuditLog
+    {
+        TenantId = tenantId,
+        FileName = fileName,
+        ActionType = "DELETED",
+        SectionsAffected = sectionsToDelete.Count,
+        CommitMessage = $"Deleted knowledge base file: {fileName}."
+    });
+
+    // Save changes to database
+    await dbContext.SaveChangesAsync(ct);
+
+    // 3. Delete from physical storage
+    await storageService.DeleteAsync(tenantId, fileName, ct);
+
+    // 4. BM25 Re-aggregation & Cache Update
+    var allSections = await dbContext.TenantSections
+        .Where(s => s.TenantId == tenantId)
+        .ToListAsync(ct);
+
+    var db = redis.GetDatabase();
+    var redisKey = $"kb:index:{tenantId}";
+
+    if (allSections.Count > 0)
+    {
+        var avgdl = allSections.Average(s => s.TokenCount);
+
+        var kbIndex = new TenantKbIndex(
+            TenantId: tenantId,
+            TotalDocuments: allSections.Count,
+            AverageDocumentLength: avgdl,
+            LastUpdatedAt: DateTime.UtcNow,
+            Sections: allSections.Select(s => new IndexedSectionMeta(
+                SectionId: s.Id,
+                FileName: s.FileName,
+                Heading: s.Heading,
+                HeadingPath: s.HeadingPath,
+                TokenCount: s.TokenCount,
+                TermFrequencies: s.Tokens
+                    .GroupBy(t => t)
+                    .ToDictionary(g => g.Key, g => g.Count())
+            )).ToList()
+        );
+
+        var json = JsonSerializer.Serialize(kbIndex);
+        await db.StringSetAsync(redisKey, json);
+    }
+    else
+    {
+        // Delete cache key if there are no documents left
+        await db.KeyDeleteAsync(redisKey);
+    }
+
+    return Results.Ok(new { message = $"File {fileName} deleted successfully." });
+});
 
 
 // Apply Migrations on Startup

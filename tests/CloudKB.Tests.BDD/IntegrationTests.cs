@@ -222,6 +222,27 @@ public class GatewayIntegrationTests : IClassFixture<WebApplicationFactory<Cloud
         _factory = factory.WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.ConfigureTestServices(services =>
+            {
+                // Remove SQL Server/Postgres DbContext and EF Core internal services
+                var descriptors = services.Where(d =>
+                    d.ServiceType == typeof(CloudKbDbContext) ||
+                    d.ServiceType == typeof(DbContextOptions<CloudKbDbContext>) ||
+                    d.ServiceType == typeof(DbContextOptions) ||
+                    d.ServiceType.FullName?.StartsWith("Microsoft.EntityFrameworkCore") == true)
+                    .ToList();
+
+                foreach (var descriptor in descriptors)
+                {
+                    services.Remove(descriptor);
+                }
+
+                // Add InMemory DbContext
+                services.AddDbContext<CloudKbDbContext>(options =>
+                {
+                    options.UseInMemoryDatabase("CloudKbGatewayTestDb");
+                });
+            });
         });
     }
 
@@ -342,6 +363,101 @@ public class GatewayIntegrationTests : IClassFixture<WebApplicationFactory<Cloud
         // Assert
         Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
+
+    [Fact]
+    public async Task PostLogin_WithValidCredentials_ShouldReturnJwtToken()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        var request = new { Username = "tenant-01", Password = "password" };
+
+        // Act
+        var response = await client.PostAsJsonAsync("/api/auth/login", request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        Assert.NotNull(json);
+        Assert.True(json.ContainsKey("token"));
+        Assert.False(string.IsNullOrWhiteSpace(json["token"]));
+    }
+
+    [Fact]
+    public async Task PostLogin_WithInvalidCredentials_ShouldReturn401Unauthorized()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        var request = new { Username = "tenant-01", Password = "wrong-password" };
+
+        // Act
+        var response = await client.PostAsJsonAsync("/api/auth/login", request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PostRegister_WithValidCredentials_ShouldCreateUserAndAllowLogin()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        var username = $"user_{Guid.NewGuid():N}";
+        var registerRequest = new { Username = username, Password = "securepassword123" };
+
+        // Act - Register
+        var registerResponse = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
+
+        // Assert - Register
+        Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
+        var registerJson = await registerResponse.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        Assert.NotNull(registerJson);
+        Assert.Equal("User registered successfully.", registerJson["message"]);
+
+        // Act - Login
+        var loginRequest = new { Username = username, Password = "securepassword123" };
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", loginRequest);
+
+        // Assert - Login
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+        var loginJson = await loginResponse.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        Assert.NotNull(loginJson);
+        Assert.True(loginJson.ContainsKey("token"));
+        Assert.False(string.IsNullOrWhiteSpace(loginJson["token"]));
+    }
+
+    [Fact]
+    public async Task PostRegister_WithTooShortPassword_ShouldReturn400BadRequest()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        var username = $"user_{Guid.NewGuid():N}";
+        var registerRequest = new { Username = username, Password = "123" };
+
+        // Act
+        var response = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PostRegister_WithDuplicateUsername_ShouldReturn409Conflict()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        var username = $"user_{Guid.NewGuid():N}";
+        var registerRequest = new { Username = username, Password = "securepassword123" };
+
+        // Act 1 - First register
+        var response1 = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
+        Assert.Equal(HttpStatusCode.Created, response1.StatusCode);
+
+        // Act 2 - Second register with same username
+        var response2 = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Conflict, response2.StatusCode);
+    }
 }
 
 public class IndexingApiIntegrationTests : IClassFixture<WebApplicationFactory<CloudKB.ApiService.Indexing.Program>>
@@ -379,9 +495,14 @@ public class IndexingApiIntegrationTests : IClassFixture<WebApplicationFactory<C
                     options.UseInMemoryDatabase("CloudKbIndexingTestDb");
                 });
 
-                // Inject mock Storage and RabbitMQ connection
+                // Inject mock Storage, RabbitMQ connection, and Redis multiplexer
                 services.AddSingleton(_mockStorage);
                 services.AddSingleton(_mockRabbitConnection);
+
+                var mockRedis = Substitute.For<IConnectionMultiplexer>();
+                var mockDb = Substitute.For<IDatabase>();
+                mockRedis.GetDatabase(Arg.Any<int>(), Arg.Any<object>()).Returns(mockDb);
+                services.AddSingleton(mockRedis);
             });
         });
     }
@@ -486,6 +607,154 @@ public class IndexingApiIntegrationTests : IClassFixture<WebApplicationFactory<C
 
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetFiles_ShouldReturnTenantFiles()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-User-Id", "tenant-01");
+
+        // Seed some files in EF DbContext
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CloudKbDbContext>();
+            db.TenantFiles.Add(new TenantFile
+            {
+                TenantId = "tenant-01",
+                FileName = "test_doc_a.md",
+                S3Key = "/tenant-01/raw/test_doc_a.md",
+                FileSizeBytes = 100,
+                ContentHash = "hash1",
+                IsIndexed = true,
+                UploadedAt = DateTime.UtcNow
+            });
+            db.TenantFiles.Add(new TenantFile
+            {
+                TenantId = "tenant-02",
+                FileName = "test_doc_b.md",
+                S3Key = "/tenant-02/raw/test_doc_b.md",
+                FileSizeBytes = 200,
+                ContentHash = "hash2",
+                IsIndexed = true,
+                UploadedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        var response = await client.GetAsync("/api/index/files");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var filesList = await response.Content.ReadFromJsonAsync<List<Dictionary<string, object>>>();
+        Assert.NotNull(filesList);
+        
+        // Should only return tenant-01 file!
+        Assert.Single(filesList);
+        var jsonEl = (JsonElement)filesList[0]["fileName"];
+        Assert.Equal("test_doc_a.md", jsonEl.GetString());
+    }
+
+    [Fact]
+    public async Task DeleteFile_WithNonExistentFile_ShouldReturn404NotFound()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-User-Id", "tenant-01");
+
+        // Act
+        var response = await client.DeleteAsync("/api/index/nonexistent.md");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteFile_WithValidFile_ShouldPurgeFromDbAndStorageAndCache()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-User-Id", "tenant-01");
+
+        // Seed a file in the DB first
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CloudKbDbContext>();
+            
+            // Clean up any existing records for test consistency
+            db.TenantSections.RemoveRange(db.TenantSections.Where(s => s.TenantId == "tenant-01"));
+            db.TenantFiles.RemoveRange(db.TenantFiles.Where(f => f.TenantId == "tenant-01"));
+            db.TenantFileStates.RemoveRange(db.TenantFileStates.Where(fs => fs.TenantId == "tenant-01"));
+            await db.SaveChangesAsync();
+
+            db.TenantFiles.Add(new TenantFile
+            {
+                TenantId = "tenant-01",
+                FileName = "deletable.md",
+                S3Key = "/tenant-01/raw/deletable.md",
+                FileSizeBytes = 100,
+                ContentHash = "abc",
+                IsIndexed = true
+            });
+
+            db.TenantFileStates.Add(new TenantFileState
+            {
+                Id = "tenant-01#deletable.md",
+                TenantId = "tenant-01",
+                FileName = "deletable.md",
+                ContentHash = "abc"
+            });
+
+            db.TenantSections.Add(new TenantSection
+            {
+                Id = "tenant-01#deletable.md#test",
+                TenantId = "tenant-01",
+                FileName = "deletable.md",
+                Heading = "Test",
+                Content = "This is a test section to delete.",
+                TokenCount = 7,
+                Tokens = new List<string> { "this", "is", "a", "test", "section", "to", "delete" }
+            });
+
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        var response = await client.DeleteAsync("/api/index/deletable.md");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        Assert.NotNull(json);
+        Assert.Equal("File deletable.md deleted successfully.", json["message"]);
+
+        // Verify Storage delete call
+        await _mockStorage.Received(1).DeleteAsync(
+            "tenant-01",
+            "deletable.md",
+            Arg.Any<CancellationToken>());
+
+        // Verify database is cleared
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CloudKbDbContext>();
+
+            var existsInFiles = await db.TenantFiles.AnyAsync(f => f.TenantId == "tenant-01" && f.FileName == "deletable.md");
+            Assert.False(existsInFiles);
+
+            var existsInStates = await db.TenantFileStates.AnyAsync(fs => fs.TenantId == "tenant-01" && fs.FileName == "deletable.md");
+            Assert.False(existsInStates);
+
+            var existsInSections = await db.TenantSections.AnyAsync(s => s.TenantId == "tenant-01" && s.FileName == "deletable.md");
+            Assert.False(existsInSections);
+
+            var auditLog = await db.IndexAuditLogs.FirstOrDefaultAsync(l => l.TenantId == "tenant-01" && l.FileName == "deletable.md" && l.ActionType == "DELETED");
+            Assert.NotNull(auditLog);
+            Assert.Equal(1, auditLog.SectionsAffected);
+            Assert.Equal("Deleted knowledge base file: deletable.md.", auditLog.CommitMessage);
+        }
     }
 }
 

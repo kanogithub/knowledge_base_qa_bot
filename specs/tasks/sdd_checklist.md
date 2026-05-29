@@ -47,7 +47,7 @@ This checklist tracks the implementation progress of all features and tasks in t
       - [x] Expose anonymous gateway liveness check endpoint returning `{"status": "ok"}`
       - [x] Verify health status responses match specs using acceptance tests
 
-- [-] **Milestone 2: Write Pipeline & Frontend (Epic 1 & 3)**
+- [x] **Milestone 2: Write Pipeline & Frontend (Epic 1 & 3)**
   - [x] **Feature 1: Gateway Write Route Auth & Security Boundaries**
     - [x] **Task 1: Full Gateway Auth** ([task-1-gateway-auth.md](./milestone-2-write-pipeline/task-1-gateway-auth.md))
       - [x] Add Yarp proxy routes for Ingest (`POST /api/index`) and Notification stream/logs
@@ -82,11 +82,27 @@ This checklist tracks the implementation progress of all features and tasks in t
       - [x] Subscribe to Redis Pub/Sub channels and push event frames downstream
       - [x] Implement `GET /api/notifications/logs` returning JSON audit list
       - [x] Handle graceful client disconnection and resource cleanup
-  - [ ] **Feature 8: Integrated Knowledge Base Dashboard & Grounded Chat Interface**
-    - [ ] **Task 8: Frontend Interface** ([task-8-frontend.md](./milestone-2-write-pipeline/task-8-frontend.md))
-      - [ ] Scaffold Vite React + TS + Tailwind project under `CloudKB.Web`
-      - [ ] Implement JWT Token Mock authorization store
-      - [ ] Implement Drag-and-Drop file uploader communicating with Ingest API
-      - [ ] Integrate notification events to trigger status toast messages
-      - [ ] Implement grounded Chat Box with streaming message parser and citation rendering
-      - [ ] Implement Commit History Wall UI mapping Added/Modified/Deleted badges
+  - [x] **Feature 8: Integrated Knowledge Base Dashboard & Grounded Chat Interface**
+    - [x] **Task 8: Frontend Interface** ([task-8-frontend.md](./milestone-2-write-pipeline/task-8-frontend.md))
+      - [x] Scaffold Vite React + TS + Tailwind project under `CloudKB.Web`
+      - [x] Implement JWT Token Mock authorization store
+      - [x] Implement Drag-and-Drop file uploader communicating with Ingest API
+      - [x] Integrate notification events to trigger status toast messages
+      - [x] Implement grounded Chat Box with streaming message parser and citation rendering
+      - [x] Implement Simplified Split-Pane Dashboard layout and Citations details drawer (superseded Commit History Wall per user request)
+      - [x] Implement User Self-Registration Flow (PostgreSQL Persisted):
+        - [x] Configure `TenantUser` entity model and database context mapping
+        - [x] Generate and apply EF Core database migrations
+        - [x] Implement `POST /api/auth/register` Minimal API endpoint with password hashing in Gateway
+        - [x] Refactor `/api/auth/login` to support DB user credentials and mock fallbacks
+        - [x] Implement Register UI form toggles in React SPA
+        - [x] Write BDD integration tests for registration and conflict handling
+      - [x] Implement Knowledge File Deletion & BM25 Cache Re-aggregation:
+        - [x] Add Redis reference to `apiservice-indexing` project in AppHost
+        - [x] Add `DeleteAsync` to `IStorageService` interface and implementations (Local/S3)
+        - [x] Register Redis connection and implement `DELETE /api/index/{fileName}` in Indexing service
+        - [x] Configure Yarp proxy routing for DELETE request in Gateway
+        - [x] Add interactive Trash icon button to frontend files directory list table
+        - [x] Write integration BDD tests for file deletion and cache re-aggregation
+
+

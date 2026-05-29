@@ -8,4 +8,5 @@ public interface IStorageService
 {
     Task UploadAsync(string tenantId, string fileName, Stream fileStream, CancellationToken ct);
     Task<string> DownloadAsync(string tenantId, string fileName, CancellationToken ct);
+    Task DeleteAsync(string tenantId, string fileName, CancellationToken ct);
 }

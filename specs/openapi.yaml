@@ -39,6 +39,8 @@ security:
 tags:
   - name: Health
     description: Liveness & readiness probes
+  - name: Authentication
+    description: "Tenant authentication & token issuance"
   - name: Indexing
     description: "Epic 1 — Write Pipeline: async file ingestion"
   - name: Chat
@@ -99,6 +101,110 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/index/files:
+    get:
+      operationId: getTenantFiles
+      tags: [Indexing]
+      summary: Retrieve the list of uploaded files for the tenant
+      description: Returns a list of all raw Markdown files uploaded by the tenant and their indexing status.
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+      responses:
+        "200":
+          description: List of tenant files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TenantFileResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/index/{fileName}:
+    delete:
+      operationId: deleteTenantFile
+      tags: [Indexing]
+      summary: Delete an uploaded Markdown file and update the BM25 index
+      description: |
+        Removes the specified file from database registry, deletes all associated parsed sections,
+        wipes the file from S3/MinIO storage, updates index audit logs, and triggers a full BM25
+        index recalculation, updating or clearing the Redis cache.
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+        - name: fileName
+          in: path
+          required: true
+          description: The name of the file to delete (e.g. refund_policy.md).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File deleted and index updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "File refund_policy.md deleted successfully."
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: File not found
+
+  /api/auth/login:
+    post:
+      operationId: login
+      tags: [Authentication]
+      summary: Authenticate tenant user and issue JWT
+      description: |
+        Authenticates a user using username and password. Returns a signed JWT token
+        containing the `user_id` claim used for tenant isolation.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid credentials
+
+  /api/auth/register:
+    post:
+      operationId: register
+      tags: [Authentication]
+      summary: Register a new tenant user
+      description: |
+        Registers a new user inside the Gateway's registry. The password must be at least 6 characters.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+        "400":
+          description: Invalid username or password (e.g. password too short)
+        "409":
+          description: Username already exists
 
   # ── Chat (Read Pipeline) ────────────────────────────────
   /api/chat:
@@ -245,6 +351,64 @@ components:
           type: string
           enum: [ok]
           example: ok
+
+    # -- Authentication --
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: "tenant-01"
+        password:
+          type: string
+          example: "password"
+
+    LoginResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Signed JWT access token.
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: "new-tenant"
+        password:
+          type: string
+          example: "new-secure-password"
+
+    RegisterResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: "User registered successfully."
+
+    TenantFileResponse:
+      type: object
+      required: [fileName, fileSizeBytes, isIndexed, uploadedAt]
+      properties:
+        fileName:
+          type: string
+          example: "refund_policy.md"
+        fileSizeBytes:
+          type: integer
+          example: 1024
+        isIndexed:
+          type: boolean
+          example: true
+        uploadedAt:
+          type: string
+          format: date-time
+          example: "2026-05-28T01:04:51Z"
 
     # -- Indexing --
     IndexRequest:

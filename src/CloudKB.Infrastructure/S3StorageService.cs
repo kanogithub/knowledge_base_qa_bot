@@ -65,4 +65,17 @@ public class S3StorageService : IStorageService
         using var reader = new StreamReader(response.ResponseStream);
         return await reader.ReadToEndAsync(ct);
     }
+
+    public async Task DeleteAsync(string tenantId, string fileName, CancellationToken ct)
+    {
+        var key = $"{tenantId}/raw/{fileName}";
+        try
+        {
+            await _s3Client.DeleteObjectAsync(_bucketName, key, ct);
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // Ignore if object not found in S3
+        }
+    }
 }

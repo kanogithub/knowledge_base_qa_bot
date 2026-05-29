@@ -10,3 +10,6 @@
   - Implement tenant login and JWT store, establishing a token-authenticated SSE channel (`GET /api/notifications/stream`) using `event-source-polyfill` to listen for progress (`IndexProcessing`), success (`IndexCompleted`), and failure (`IndexFailed`) events.
   - Support dragging `.md` files to compile a `FormData` upload to `/api/index`, showing the `TaskId` upon `202 Accepted` response. Trigger an automatic fetch to reload the commit history wall (`GET /api/notifications/logs`) upon receiving an `IndexCompleted` SSE event.
   - Stream the response of `/api/chat` using `ReadableStream` reader, parsing the initial citations metadata and subsequent typewriter tokens. Render citations as interactive clickable badges that display the referenced section contents in a drawer when clicked.
+  - Implement tenant self-registration form (`POST /api/auth/register`) validating password strength and unique account creations in the database.
+  - Provide table row action to delete uploaded files, invoking `DELETE /api/index/{fileName}` to execute DB cascades, clean storage assets, and recompute/clear Redis cache indexes.
+

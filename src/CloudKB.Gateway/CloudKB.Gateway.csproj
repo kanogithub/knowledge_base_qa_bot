@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CloudKB.ServiceDefaults\CloudKB.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\CloudKB.Infrastructure\CloudKB.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -9,6 +10,9 @@
     <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.18.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.8" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -26,7 +26,8 @@ specs/
 │   ├── feature-4-notification-stream.feature
 │   ├── feature-5-chat-gateway.feature
 │   ├── feature-6-chat-qa-engine.feature
-│   └── feature-7-health-check.feature
+│   ├── feature-7-health-check.feature
+│   └── feature-8-frontend.feature
 └── tasks/                             # 9. Agent implementation task guides
     ├── README.md
     ├── milestone-0-foundation/
@@ -138,8 +139,8 @@ dotnet ef migrations has-pending-model-changes -p CloudKB.Infrastructure -s Clou
 | Attribute | Value |
 |-----------|-------|
 | **Format** | Gherkin (Cucumber / SpecFlow syntax) |
-| **Coverage** | All 6 Features across Epic 1 & Epic 2 |
-| **Total Scenarios** | 40+ acceptance criteria |
+| **Coverage** | All 8 Features across Epics 1, 2 & 3 |
+| **Total Scenarios** | 45+ acceptance criteria |
 
 ### Feature-to-File Mapping
 
@@ -152,6 +153,8 @@ dotnet ef migrations has-pending-model-changes -p CloudKB.Infrastructure -s Clou
 | F5: Chat Gateway | `feature-5-chat-gateway.feature` | Chat routing, query validation, concurrency |
 | F6: Chat QA Engine | `feature-6-chat-qa-engine.feature` | BM25 retrieval, early exit, grounded SSE stream |
 | F7: Health Check | `feature-7-health-check.feature` | Gateway liveness probe, downstream microservices local probe |
+| F8: Frontend UI | `feature-8-frontend.feature` | Tenant login, drag-and-drop markdown upload, file list view, streaming markdown chat with citations |
+
 
 ### Automation Targets
 

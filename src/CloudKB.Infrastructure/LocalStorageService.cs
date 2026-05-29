@@ -52,4 +52,14 @@ public class LocalStorageService : IStorageService
 
         return await File.ReadAllTextAsync(filePath, ct);
     }
+
+    public Task DeleteAsync(string tenantId, string fileName, CancellationToken ct)
+    {
+        var filePath = Path.Combine(_storagePath, tenantId, fileName);
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+        }
+        return Task.CompletedTask;
+    }
 }

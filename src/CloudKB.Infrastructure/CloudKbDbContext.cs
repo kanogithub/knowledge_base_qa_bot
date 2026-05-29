@@ -13,6 +13,7 @@ public class CloudKbDbContext : DbContext
     public DbSet<TenantFile> TenantFiles => Set<TenantFile>();
     public DbSet<TenantFileState> TenantFileStates => Set<TenantFileState>();
     public DbSet<IndexAuditLog> IndexAuditLogs => Set<IndexAuditLog>();
+    public DbSet<TenantUser> TenantUsers => Set<TenantUser>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -88,6 +89,17 @@ public class CloudKbDbContext : DbContext
 
             e.HasIndex(x => new { x.TenantId, x.LoggedAt })
                 .HasDatabaseName("ix_index_audit_logs_tenant_logged");
+        });
+
+        // ── TenantUser ──
+        modelBuilder.Entity<TenantUser>(e =>
+        {
+            e.ToTable("tenant_users");
+            e.HasKey(x => x.Id);
+
+            e.HasIndex(x => x.Username)
+                .IsUnique()
+                .HasDatabaseName("uq_tenant_users_username");
         });
     }
 }

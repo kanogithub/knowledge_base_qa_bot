@@ -25,8 +25,10 @@ var indexingApi = builder.AddProject<Projects.CloudKB_ApiService_Indexing>("apis
                          .WithEnvironment("Storage__LocalPath", localStoragePath)
                          .WithReference(rabbitmq)
                          .WithReference(db)
+                         .WithReference(redis)
                          .WaitFor(rabbitmq)
-                         .WaitFor(db);
+                         .WaitFor(db)
+                         .WaitFor(redis);
 
 var notificationApi = builder.AddProject<Projects.CloudKB_ApiService_Notification>("apiservice-notification")
                              .WithReference(redis)
@@ -54,9 +56,11 @@ var gateway = builder.AddProject<Projects.CloudKB_Gateway>("gateway")
                      .WithReference(indexingApi)
                      .WithReference(notificationApi)
                      .WithReference(chatApi)
+                     .WithReference(db)
                      .WaitFor(indexingApi)
                      .WaitFor(notificationApi)
-                     .WaitFor(chatApi);
+                     .WaitFor(chatApi)
+                     .WaitFor(db);
 
 
 builder.Build().Run();

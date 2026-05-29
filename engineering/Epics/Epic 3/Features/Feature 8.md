@@ -22,3 +22,15 @@ Provides the central console (Dashboard) for users to interact with the system. 
   - Subsequent chunks contain text tokens, which are appended to the assistant's message bubble with a typewriter effect.
   - Any citation string matching the format `[filename#heading]` is parsed and rendered as an interactive, clickable link/badge.
   - Clicking a citation badge opens a sidebar drawer showing the exact text content of the cited section.
+* **User Self-Registration Flow:**
+  - Adds a toggleable "Sign Up" form allowing new tenant users to create credentials.
+  - Client validates password matching and length (minimum 6 characters).
+  - API Gateway registers `/api/auth/register`, hashes passwords securely via `IPasswordHasher`, checks for unique usernames, and persists user profiles in the PostgreSQL `tenant_users` table.
+* **Knowledge File Deletion & BM25 Cache Recompute:**
+  - Adds a "Delete" button to the files directory table rows.
+  - Issues a `DELETE /api/index/{fileName}` request to the backend.
+  - The indexing service removes the file metadata, file states, and all parsed section rows from PostgreSQL.
+  - Records a `DELETED` entry in the `index_audit_logs`.
+  - Removes the file from storage (MinIO/Local).
+  - Triggers an immediate BM25 statistic re-aggregation over the tenant's remaining sections, rewriting the new index into the Redis cache (or deleting the key completely if 0 documents remain).
+

@@ -440,6 +440,50 @@ indexes:
     description: Supporting chronological audit views per tenant.
 
 # ───────────────────────────────────────────────────────────
+# Entity: TenantUser
+# Table: tenant_users
+# Description:
+#   Persistent registry of user credentials for multi-tenant accounts.
+# ───────────────────────────────────────────────────────────
+
+entity: TenantUser
+table: tenant_users
+columns:
+  - name: id
+    type: uuid
+    nullable: false
+    default: "gen_random_uuid()"
+    description: Auto-generated primary key.
+
+  - name: username
+    type: text
+    nullable: false
+    description: |
+      Unique username (used as tenant identifier).
+      Example: "tenant-01"
+
+  - name: password_hash
+    type: text
+    nullable: false
+    description: |
+      Hashed user password.
+      Example: "$2a$11$..."
+
+  - name: created_at
+    type: timestamp with time zone
+    nullable: false
+    default: "now()"
+    description: Row creation timestamp (UTC).
+
+primary_key:
+  columns: [id]
+
+unique_constraints:
+  - name: uq_tenant_users_username
+    columns: [username]
+    description: Username must be globally unique.
+
+# ───────────────────────────────────────────────────────────
 # EF Core 10 — DbContext Configuration (Reference)
 # ───────────────────────────────────────────────────────────
 #
@@ -453,6 +497,7 @@ indexes:
 #     public DbSet<TenantFile> TenantFiles => Set<TenantFile>();
 #     public DbSet<TenantFileState> TenantFileStates => Set<TenantFileState>();
 #     public DbSet<IndexAuditLog> IndexAuditLogs => Set<IndexAuditLog>();
+#     public DbSet<TenantUser> TenantUsers => Set<TenantUser>();
 #
 #     protected override void OnModelCreating(ModelBuilder modelBuilder)
 #     {
@@ -510,6 +555,16 @@ indexes:
 #             e.HasKey(x => x.Id);
 #             e.HasIndex(x => new { x.TenantId, x.LoggedAt })
 #              .HasDatabaseName("ix_index_audit_logs_tenant_logged");
+#         });
+#
+#         // ── TenantUser ──
+#         modelBuilder.Entity<TenantUser>(e =>
+#         {
+#             e.ToTable("tenant_users");
+#             e.HasKey(x => x.Id);
+#             e.HasIndex(x => x.Username)
+#              .IsUnique()
+#              .HasDatabaseName("uq_tenant_users_username");
 #         });
 #     }
 # }
